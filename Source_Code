@@ -1,0 +1,85 @@
+Source code of the project:
+
+import pandas as pd  
+import numpy as np 
+from sklearn.model_selection import train_test_split  
+from sklearn.preprocessing import StandardScaler 
+from imblearn.over_sampling import SMOTE  
+from xgboost import XGBClassifier 
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, 
+roc_auc_score 
+# Load the dataset (download from Kaggle) 
+df = pd.read_csv("/content/sample_data/creditcard.csv") 
+# Ensure the "Class" column is not empty 
+if df["Class"].nunique() == 1: # If all values are 0 
+print("No fraud cases detected. Adding synthetic fraud cases...") 
+# Set percentage of fraud cases (e.g., 1% of total data) 
+fraud_percentage = 0.01 # You can adjust this value 
+# Get total number of fraud cases we need 
+num_fraud_cases = int(len(df) * fraud_percentage) 
+# Randomly select indices for fraud cases 
+fraud_indices = np.random.choice(df.index, num_fraud_cases, replace=False) 
+# Set selected indices to fraud (1) 
+df.loc[fraud_indices, "Class"] = 1 
+# Verify fraud cases are now present  
+print(df["Class"].value_counts()) 
+X = df.drop(columns=["Class"]) # Features (Transaction details) 
+28 
+y = df["Class"] # Target (Fraud/Non-Fraud) 
+# Now split safely 
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, ran
+dom_state=42) 
+# Apply SMOTE to balance dataset (Oversample fraud cases) 
+smote = SMOTE(sampling_strategy=0.5, random_state=42) # Increase fraud cases to 50% of 
+non-fraud  
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train) 
+# Standardize the features (important for XGBoost)  
+scaler = StandardScaler() 
+X_train_resampled = scaler.fit_transform(X_train_resampled)  
+X_test = scaler.transform(X_test) 
+# Compute class weight ratio for XGBoost  
+neg, pos = np.bincount(y_train_resampled) 
+scale_pos_weight = neg / pos # Ratio of non-fraud to fraud 
+# Train optimized XGBoost model  
+model = XGBClassifier( 
+n_estimators=500, # More trees for better performance    
+learning_rate=0.03, # Slower learning rate for stability    
+max_depth=8, # Deeper trees capture complex patterns                     
+scale_pos_weight=scale_pos_weight,  # Handles class imbalance    
+subsample=0.8, 
+# Prevents overfitting 
+colsample_bytree=0.8,  # Uses only part of the features for diversity    
+random_state=42, 
+eval_metric="logloss", 
+) 
+model.fit(X_train_resampled, y_train_resampled) 
+29 
+# Get raw probability scores 
+y_pred_proba = model.predict_proba(X_test)[:, 1] 
+# Adjust threshold for better fraud detection (default is 0.5, use 0.3) 
+threshold = 0.3 
+y_pred = (y_pred_proba > threshold).astype(int) 
+# Model evaluation 
+accuracy = accuracy_score(y_test, y_pred) 
+roc_auc = roc_auc_score(y_test, y_pred_proba) 
+print(f"Model Accuracy: {accuracy:.4f}")  
+print(f"AUC-ROC Score: {roc_auc:.4f}") 
+import matplotlib.pyplot as plt 
+from sklearn.metrics import roc_curve, auc 
+# Get predicted probabilities for the positive class (fraud)  
+y_pred_proba = model.predict_proba(X_test)[:, 1] 
+# Compute ROC curve values 
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba) 
+# Compute AUC (Area Under the Curve) roc_auc = auc(fpr, tpr) 
+# Plot ROC Curve 
+plt.figure(figsize=(8, 6)) 
+plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})') 
+plt.plot([0, 1], [0, 1], color='gray', linestyle='--') # Diagonal line (random guess) plt.xlim([0.0, 
+1.0]) 
+plt.ylim([0.0, 1.05]) 
+plt.xlabel('False Positive Rate (FPR)')  
+plt.ylabel('True Positive Rate (TPR)') 
+plt.title('Receiver Operating Characteristic (ROC) Curve') 
+plt.legend(loc='lower right') 
+plt.grid()  
+plt.show() 
